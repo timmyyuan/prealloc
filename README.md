@@ -1,215 +1,143 @@
 # prealloc
 
-prealloc is a Go static analysis tool to find slice declarations that could potentially be preallocated.
+`prealloc` finds Go slice declarations that are followed by predictable appends and could benefit from an explicit capacity.
+
+This version is syntax-first: it does not typecheck packages by default. It parses Go files, applies local syntax/type-shape inference, and reports only when it can prove the preallocation suggestion from that information. When the syntax-only pass cannot prove a case, it skips the diagnostic instead of guessing.
+
+For projects that want the old precision profile, `prealloc` can fall back to typechecking only packages that contain unknown-but-promising candidates.
+
+## Why syntax-first?
+
+The original analyzer runs through `go/analysis`, which typechecks every target package before the checker can report anything. That is accurate, but package typechecking is often the slowest part of running this linter.
+
+Most useful preallocation cases are visible from syntax alone:
+
+```go
+var xs []int
+for i := range items {
+	xs = append(xs, i)
+}
+```
+
+The tool can see that `xs` is a slice, the append happens once per iteration, and `items` has a known length expression. No package-wide typecheck is needed to report:
+
+```text
+file.go:3:6: Consider preallocating xs with capacity len(items)
+```
+
+## Accuracy model
+
+By default, `prealloc` is conservative:
+
+- reports syntax-proven cases
+- skips unknown external types, dot imports, selector-defined types, and method-return cases it cannot prove
+- avoids speculative diagnostics when an expression might be a channel, iterator, function range, or non-slice value
+
+That means the default mode prefers false negatives over false positives. In the upstream `testdata` suite with `-forloops`, syntax-only mode reports 127 of 130 typechecked diagnostics and produces 0 extra diagnostics.
+
+Use `-fallback=typecheck` when you want the typechecked result set while still avoiding typecheck work for packages that the syntax pass fully resolves. On the same `testdata` suite, `-fallback=typecheck` matches the original typed analyzer output exactly.
+
+## Performance
+
+The main performance win comes from avoiding full package typechecking on the common path.
+
+Example local measurements on Go 1.24, using the Go standard library `net/http` package with `-forloops`:
+
+```text
+old prealloc typechecked analyzer:        avg 1.338s
+new prealloc syntax-only:                 avg 0.336s
+new prealloc -fallback=typecheck:         avg 0.678s
+```
+
+On tiny packages, process startup and `go list` overhead can dominate. On larger packages and `./...` runs, skipping typecheck is where the syntax-first design pays off.
 
 ## Installation
 
-    go install github.com/alexkohler/prealloc@latest
+```sh
+go install github.com/alexkohler/prealloc@latest
+```
+
+If you are trying an unmerged fork or feature branch, clone it and run `go install .` from the repository root.
 
 ## Usage
 
-Similar to other Go static analysis tools (such as golint, go vet), prealloc can be invoked with one or more filenames, directories, or packages named by its import path. Prealloc also supports the `...` wildcard.
+```sh
+prealloc [flags] files/directories/packages
+```
 
-    prealloc [flags] files/directories/packages
+Examples:
 
-### Flags
-- **-simple** (default true) - Report preallocation suggestions only on simple loops that have no returns/breaks/continues/gotos in them. Setting this to false may increase false positives.
-- **-rangeloops** (default true) - Report preallocation suggestions on range loops.
-- **-forloops** (default false) - Report preallocation suggestions on for loops. This is false by default due to there generally being weirder things happening inside for loops (at least from what I've observed in the Standard Library).
-- **-fallback** (default off) - How to handle syntax-only unknowns. Use `off` to skip them, or `typecheck` to typecheck only packages with unknown candidates.
-- **-format** (default prealloc) - Diagnostic output format. Use `prealloc` for the standard format, or `golangci-lint` to append the linter name.
+```sh
+prealloc ./...
+prealloc -forloops ./...
+prealloc -fallback=typecheck ./...
+prealloc -format=golangci-lint ./...
+```
 
-## Purpose
+`prealloc` accepts files, directories, import paths, and `...` package patterns.
 
-While [Go *does* attempt to avoid reallocation by growing the capacity in advance](https://github.com/golang/go/blob/87e48c5afdcf5e01bb2b7f51b7643e8901f4b7f9/src/runtime/slice.go#L100-L112), this sometimes isn't enough for longer slices.  If the size of a slice is known at the time of its creation, it should be specified.
+## Flags
 
-Consider the following benchmark: (this can be found in prealloc_test.go in this repo)
+- `-simple` (default `true`): report only on simple loops with no returns, breaks, continues, or gotos. Turning this off may increase false positives.
+- `-rangeloops` (default `true`): report suggestions in range loops.
+- `-forloops` (default `false`): report suggestions in counted for loops.
+- `-fallback` (default `off`): unknown handling mode. Use `off` to skip unknown syntax-only candidates, or `typecheck` to typecheck only packages with unknown candidates.
+- `-format` (default `prealloc`): output format. Use `prealloc` for the standard output or `golangci-lint` to append the linter name.
 
-```Go
-import "testing"
+## Output Formats
 
-func BenchmarkNoPreallocate(b *testing.B) {
-	existing := make([]int64, 10, 10)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Don't preallocate our initial slice
-		var init []int64
-		for _, element := range existing {
-			init = append(init, element)
-		}
-	}
-}
+Default format:
 
-func BenchmarkPreallocate(b *testing.B) {
-	existing := make([]int64, 10, 10)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Preallocate our initial slice
-		init := make([]int64, 0, len(existing))
-		for _, element := range existing {
-			init = append(init, element)
-		}
-	}
+```text
+path/to/file.go:12:6: Consider preallocating xs with capacity len(items)
+```
+
+GolangCI-Lint-style format:
+
+```text
+path/to/file.go:12:6: Consider preallocating xs with capacity len(items) (prealloc)
+```
+
+## Fixing a Diagnostic
+
+Change a zero-capacity or under-capacity slice declaration into a `make` call with the expected capacity:
+
+```go
+var xs []int
+for i := range items {
+	xs = append(xs, i)
 }
 ```
 
-```Bash
-$ go test -bench=. -benchmem
-goos: linux
-goarch: amd64
-BenchmarkNoPreallocate-4   	 3000000	       510 ns/op	     248 B/op	       5 allocs/op
-BenchmarkPreallocate-4     	20000000	       111 ns/op	      80 B/op	       1 allocs/op
-```
+becomes:
 
-As you can see, not preallocating can cause a performance hit, primarily due to Go having to reallocate the underlying array. The pattern benchmarked above is common in Go: declare a slice, then write some sort of range or for loop that appends or indexes into it. The purpose of this tool is to flag slice/loop declarations like the one in `BenchmarkNoPreallocate`.
-
-## Example
-
-Some examples from the Go 1.9.2 source:
-
-```Bash
-$ prealloc go/src/....
-archive/tar/reader_test.go:854 Consider preallocating ss
-archive/zip/zip_test.go:201 Consider preallocating all
-cmd/api/goapi.go:301 Consider preallocating missing
-cmd/api/goapi.go:476 Consider preallocating files
-cmd/asm/internal/asm/endtoend_test.go:345 Consider preallocating extra
-cmd/cgo/main.go:60 Consider preallocating ks
-cmd/cgo/ast.go:149 Consider preallocating pieces
-cmd/compile/internal/ssa/flagalloc.go:64 Consider preallocating oldSched
-cmd/compile/internal/ssa/regalloc.go:719 Consider preallocating phis
-cmd/compile/internal/ssa/regalloc.go:718 Consider preallocating oldSched
-cmd/compile/internal/ssa/regalloc.go:1674 Consider preallocating oldSched
-cmd/compile/internal/ssa/gen/rulegen.go:145 Consider preallocating ops
-cmd/compile/internal/ssa/gen/rulegen.go:145 Consider preallocating ops
-cmd/dist/build.go:893 Consider preallocating all
-cmd/dist/build.go:1246 Consider preallocating plats
-cmd/dist/build.go:1264 Consider preallocating results
-cmd/dist/buildgo.go:59 Consider preallocating list
-cmd/doc/pkg.go:363 Consider preallocating names
-cmd/fix/typecheck.go:219 Consider preallocating b
-cmd/go/internal/base/path.go:34 Consider preallocating out
-cmd/go/internal/get/get.go:175 Consider preallocating out
-cmd/go/internal/load/pkg.go:1894 Consider preallocating dirent
-cmd/go/internal/work/build.go:2402 Consider preallocating absOfiles
-cmd/go/internal/work/build.go:2731 Consider preallocating absOfiles
-cmd/internal/objfile/pe.go:48 Consider preallocating syms
-cmd/internal/objfile/pe.go:38 Consider preallocating addrs
-cmd/internal/objfile/goobj.go:43 Consider preallocating syms
-cmd/internal/objfile/elf.go:35 Consider preallocating syms
-cmd/link/internal/ld/lib.go:1070 Consider preallocating argv
-cmd/vet/all/main.go:91 Consider preallocating pp
-database/sql/sql.go:66 Consider preallocating list
-debug/macho/file.go:506 Consider preallocating all
-internal/trace/order.go:55 Consider preallocating batches
-mime/quotedprintable/reader_test.go:191 Consider preallocating outcomes
-net/dnsclient_unix_test.go:954 Consider preallocating confLines
-net/interface_solaris.go:85 Consider preallocating ifat
-net/interface_linux_test.go:91 Consider preallocating ifmat4
-net/interface_linux_test.go:100 Consider preallocating ifmat6
-net/internal/socktest/switch.go:34 Consider preallocating st
-os/os_windows_test.go:766 Consider preallocating args
-runtime/pprof/internal/profile/filter.go:77 Consider preallocating lines
-runtime/pprof/internal/profile/profile.go:554 Consider preallocating names
-text/template/parse/node.go:189 Consider preallocating decl
-```
-
-```Go
-// cmd/api/goapi.go:301
-var missing []string
-for feature := range optionalSet {
-	missing = append(missing, feature)
-}
-
-// cmd/fix/typecheck.go:219
-var b []ast.Expr
-for _, x := range a {
-	b = append(b, x)
-}
-
-// net/internal/socktest/switch.go:34
-var st []Stat
-sw.smu.RLock()
-for _, s := range sw.stats {
-	ns := *s
-	st = append(st, ns)
-}
-sw.smu.RUnlock()
-
-// cmd/api/goapi.go:301
-var missing []string
-for feature := range optionalSet {
-	missing = append(missing, feature)
+```go
+xs := make([]int, 0, len(items))
+for i := range items {
+	xs = append(xs, i)
 }
 ```
 
-Even if the size the slice is being preallocated to is small, there's still a performance gain to be had in explicitly specifying the capacity rather than leaving it up to `append` to discover that it needs to preallocate. Of course, preallocation doesn't need to be done *everywhere*. This tool's job is just to help suggest places where one should consider preallocating.
+For very large copies, `copy` can be faster than repeated `append`:
 
-## How do I fix prealloc's suggestions?
-
-During the declaration of your slice, rather than using the zero value of the slice with `var`, initialize it with Go's built-in `make` function, passing the appropriate type and length. This length will generally be whatever you are ranging over. Fixing the examples from above would look like so:
-
-```Go
-// cmd/api/goapi.go:301
-missing := make([]string, 0, len(optionalSet))
-for feature := range optionalSet {
-	missing = append(missing, feature)
-}
-
-// cmd/fix/typecheck.go:219
-b := make([]ast.Expr, 0, len(a))
-for _, x := range a {
-	b = append(b, x)
-}
-
-// net/internal/socktest/switch.go:34
-st := make([]Stat, 0, len(sw.stats))
-sw.smu.RLock()
-for _, s := range sw.stats {
-	ns := *s
-	st = append(st, ns)
-}
-sw.smu.RUnlock()
-
-// cmd/api/goapi.go:301
-missing := make ([]string, 0, len(optionalSet))
-for feature := range optionalSet {
-	missing = append(missing, feature)
-}
+```go
+xs := make([]int, len(items))
+copy(xs, items)
 ```
 
-Note: If performance is absolutely critical, it may be more efficient to use `copy` instead of `append` for larger slices. For reference, see the following benchmark:
-```Go
-func BenchmarkSize200PreallocateCopy(b *testing.B) {
-	existing := make([]int64, 200, 200)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Preallocate our initial slice
-		init := make([]int64, len(existing))
-		copy(init, existing)
-	}
-}
-```
-```
-$ go test -bench=. -benchmem
-goos: linux
-goarch: amd64
-BenchmarkSize200NoPreallocate-4     	  500000	      3080 ns/op	    4088 B/op	       9 allocs/op
-BenchmarkSize200Preallocate-4       	 1000000	      1163 ns/op	    1792 B/op	       1 allocs/op
-BenchmarkSize200PreallocateCopy-4   	 2000000	       807 ns/op	    1792 B/op	       1 allocs/op
+## Exit Codes
+
+- `0`: no diagnostics
+- `1`: diagnostics were found or package loading failed
+- `2`: invalid command-line flags
+
+## Development
+
+Run the full local check:
+
+```sh
+go test -v ./...
+golangci-lint run --verbose
 ```
 
-## TODO
-
-- Configuration on whether or not to run on test files.
-- Globbing support (e.g. prealloc *.go).
-
-## Contributing
-
-Pull requests welcome!
-
-## Other static analysis tools
-
-If you've enjoyed prealloc, take a look at my other static analysis tools!
-- [nakedret](https://github.com/alexkohler/nakedret) - Finds naked returns.
-- [unimport](https://github.com/alexkohler/unimport) - Finds unnecessary import aliases.
+The test suite checks that `-fallback=typecheck` matches the typed analyzer on the upstream fixtures and that syntax-only mode does not produce extra diagnostics compared with the typed analyzer.
