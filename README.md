@@ -76,6 +76,47 @@ prealloc -format=golangci-lint ./...
 
 `prealloc` accepts files, directories, import paths, and `...` package patterns.
 
+## Library Usage
+
+The simplest package-level API handles package loading, syntax-first analysis, optional fallback, and output formatting:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	prealloc "github.com/alexkohler/prealloc/pkg"
+)
+
+func main() {
+	opts := prealloc.DefaultOptions()
+	opts.IncludeForLoops = true
+	opts.Fallback = prealloc.FallbackTypecheck
+	opts.Format = prealloc.FormatGolangCILint
+
+	lines, err := prealloc.CheckPackageLines([]string{"./..."}, opts)
+	if err != nil {
+		panic(err)
+	}
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+}
+```
+
+If you want structured diagnostics instead of formatted strings:
+
+```go
+diagnostics, err := prealloc.CheckPackages([]string{"./..."}, opts)
+```
+
+For integrations that already loaded and typechecked packages, use the lower-level API:
+
+```go
+diagnostics := prealloc.CheckWithTypes(fset, files, typesInfo, opts)
+```
+
 ## Flags
 
 - `-simple` (default `true`): report only on simple loops with no returns, breaks, continues, or gotos. Turning this off may increase false positives.

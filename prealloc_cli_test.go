@@ -95,11 +95,12 @@ func TestFallbackTypecheckMatchesTypedCoreOnTestdata(t *testing.T) {
 		IncludeForLoops:   true,
 	}
 
-	typed, err := collectTypedDiagnostics([]string{"./testdata"}, opts)
+	typed, err := pkg.CheckPackagesWithTypes([]string{"./testdata"}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fallback, err := collectDiagnostics([]string{"./testdata"}, opts, true)
+	opts.Fallback = pkg.FallbackTypecheck
+	fallback, err := pkg.CheckPackages([]string{"./testdata"}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +113,43 @@ func TestFallbackTypecheckMatchesTypedCoreOnTestdata(t *testing.T) {
 		)
 	}
 
-	syntaxOnly, err := collectDiagnostics([]string{"./testdata"}, opts, false)
+	opts.Fallback = pkg.FallbackOff
+	syntaxOnly, err := pkg.CheckPackages([]string{"./testdata"}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	extraSyntax := missingLines(diagnosticLines(syntaxOnly), typedLines)
 	if len(extraSyntax) > 0 {
 		t.Fatalf("syntax-only produced diagnostics absent from typed core:\n%s", strings.Join(extraSyntax, "\n"))
+	}
+}
+
+func TestPackageAPICheckPackageLines(t *testing.T) { //nolint:paralleltest
+	dir := writeTempModule(t, map[string]string{
+		"p.go": `package p
+
+func f(items []int) {
+	var xs []int
+	for i := range items {
+		xs = append(xs, i)
+	}
+}
+`,
+	})
+	t.Chdir(dir)
+
+	opts := pkg.DefaultOptions()
+	opts.Format = pkg.FormatGolangCILint
+
+	lines, err := pkg.CheckPackageLines([]string{"."}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("got %d diagnostics, want 1: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "p.go:4:6: Consider preallocating xs with capacity len(items) (prealloc)") {
+		t.Fatalf("unexpected formatted diagnostic: %q", lines[0])
 	}
 }
 
@@ -139,12 +170,8 @@ func writeTempModule(t *testing.T, files map[string]string) string {
 }
 
 func diagnosticLines(diagnostics []pkg.Diagnostic) []string {
-	sortDiagnostics(diagnostics)
-	lines := make([]string, 0, len(diagnostics))
-	for _, d := range diagnostics {
-		lines = append(lines, formatDiagnostic(d, "prealloc"))
-	}
-	return lines
+	pkg.SortDiagnostics(diagnostics)
+	return pkg.FormatDiagnostics(diagnostics, pkg.FormatPrealloc)
 }
 
 func missingLines(want, got []string) []string {
