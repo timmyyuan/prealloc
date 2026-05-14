@@ -16,6 +16,8 @@ Similar to other Go static analysis tools (such as golint, go vet), prealloc can
 - **-simple** (default true) - Report preallocation suggestions only on simple loops that have no returns/breaks/continues/gotos in them. Setting this to false may increase false positives.
 - **-rangeloops** (default true) - Report preallocation suggestions on range loops.
 - **-forloops** (default false) - Report preallocation suggestions on for loops. This is false by default due to there generally being weirder things happening inside for loops (at least from what I've observed in the Standard Library).
+- **-fallback** (default off) - How to handle syntax-only unknowns. Use `off` to skip them, or `typecheck` to typecheck only packages with unknown candidates.
+- **-format** (default prealloc) - Diagnostic output format. Use `prealloc` for the standard format, or `golangci-lint` to append the linter name.
 
 ## Purpose
 
