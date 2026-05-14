@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"go/token"
 	"go/types"
+	"slices"
 	"strconv"
 
 	"golang.org/x/tools/go/analysis"
@@ -187,8 +188,8 @@ func (v *returnsVisitor) Visit(node ast.Node) ast.Visitor {
 				v.sliceDeclarations = append(v.sliceDeclarations, &sliceDeclaration{name: ident.Name, pos: s.Pos(), level: v.level, lenExpr: lenExpr})
 			} else {
 				declIdx := -1
-				for i := len(v.sliceDeclarations) - 1; i >= 0; i-- {
-					if v.sliceDeclarations[i].name == ident.Name {
+				for i, sliceDecl := range slices.Backward(v.sliceDeclarations) {
+					if sliceDecl.name == ident.Name {
 						declIdx = i
 						break
 					}
@@ -222,8 +223,8 @@ func (v *returnsVisitor) Visit(node ast.Node) ast.Visitor {
 		if funIdent, ok := s.Fun.(*ast.Ident); ok && funIdent.Name == "append" && len(s.Args) >= 2 {
 			if rhsIdent, ok := s.Args[0].(*ast.Ident); ok {
 				declIdx := -1
-				for i := len(v.sliceDeclarations) - 1; i >= 0; i-- {
-					if v.sliceDeclarations[i].name == rhsIdent.Name {
+				for i, sliceDecl := range slices.Backward(v.sliceDeclarations) {
+					if sliceDecl.name == rhsIdent.Name {
 						declIdx = i
 						break
 					}

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/format"
 	"go/token"
+	"slices"
 	"strconv"
 )
 
@@ -352,11 +353,12 @@ func (v *syntaxVisitor) handleAssignStmt(s *ast.AssignStmt) {
 			continue
 		}
 		create := v.isCreateArray(s.Rhs[i])
-		if create.ok {
+		switch {
+		case create.ok:
 			v.sliceDeclarations = append(v.sliceDeclarations, &sliceDeclaration{name: ident.Name, pos: s.Pos(), level: v.level, lenExpr: create.lenExpr})
-		} else if create.unknown && s.Tok == token.DEFINE {
+		case create.unknown && s.Tok == token.DEFINE:
 			v.unknownDeclarations = append(v.unknownDeclarations, &sliceDeclaration{name: ident.Name, pos: s.Pos(), level: v.level, lenExpr: intExpr(0)})
-		} else {
+		default:
 			declIdx := v.findSliceDeclaration(ident.Name)
 			if declIdx >= 0 {
 				sliceDecl := v.sliceDeclarations[declIdx]
@@ -770,8 +772,7 @@ func (v *syntaxVisitor) exprType(expr ast.Expr) (syntaxType, bool) {
 	case *ast.ParenExpr:
 		return v.exprType(e.X)
 	case *ast.Ident:
-		switch e.Name {
-		case "nil":
+		if e.Name == "nil" {
 			return syntaxType{kind: syntaxOther}, true
 		}
 		return v.lookupVar(e.Name)
@@ -951,8 +952,8 @@ func (v *syntaxVisitor) funcType(t *ast.FuncType) syntaxType {
 }
 
 func (v *syntaxVisitor) lookupVar(name string) (syntaxType, bool) {
-	for i := len(v.scopes) - 1; i >= 0; i-- {
-		if t, ok := v.scopes[i].vars[name]; ok {
+	for _, scope := range slices.Backward(v.scopes) {
+		if t, ok := scope.vars[name]; ok {
 			return t, true
 		}
 	}
@@ -960,8 +961,8 @@ func (v *syntaxVisitor) lookupVar(name string) (syntaxType, bool) {
 }
 
 func (v *syntaxVisitor) lookupTypeExpr(name string) (ast.Expr, bool) {
-	for i := len(v.scopes) - 1; i >= 0; i-- {
-		if expr, ok := v.scopes[i].types[name]; ok {
+	for _, scope := range slices.Backward(v.scopes) {
+		if expr, ok := scope.types[name]; ok {
 			return expr, true
 		}
 	}
@@ -969,8 +970,8 @@ func (v *syntaxVisitor) lookupTypeExpr(name string) (ast.Expr, bool) {
 }
 
 func (v *syntaxVisitor) findSliceDeclaration(name string) int {
-	for i := len(v.sliceDeclarations) - 1; i >= 0; i-- {
-		if v.sliceDeclarations[i].name == name {
+	for i, sliceDecl := range slices.Backward(v.sliceDeclarations) {
+		if sliceDecl.name == name {
 			return i
 		}
 	}
@@ -978,8 +979,8 @@ func (v *syntaxVisitor) findSliceDeclaration(name string) int {
 }
 
 func (v *syntaxVisitor) findUnknownDeclaration(name string) int {
-	for i := len(v.unknownDeclarations) - 1; i >= 0; i-- {
-		if v.unknownDeclarations[i].name == name {
+	for i, sliceDecl := range slices.Backward(v.unknownDeclarations) {
+		if sliceDecl.name == name {
 			return i
 		}
 	}

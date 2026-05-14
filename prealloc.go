@@ -75,13 +75,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch fallback {
 	case "off", "typecheck":
 	default:
-		fmt.Fprintf(stderr, "invalid -fallback %q: expected off or typecheck\n", fallback)
+		_, _ = fmt.Fprintf(stderr, "invalid -fallback %q: expected off or typecheck\n", fallback)
 		return 2
 	}
 	switch format {
 	case "prealloc", "golangci-lint":
 	default:
-		fmt.Fprintf(stderr, "invalid -format %q: expected prealloc or golangci-lint\n", format)
+		_, _ = fmt.Fprintf(stderr, "invalid -format %q: expected prealloc or golangci-lint\n", format)
 		return 2
 	}
 
@@ -92,12 +92,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	diagnostics, err := collectDiagnostics(patterns, opts, fallback == "typecheck")
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	sortDiagnostics(diagnostics)
 	for _, d := range diagnostics {
-		fmt.Fprintln(stdout, formatDiagnostic(d, format))
+		_, _ = fmt.Fprintln(stdout, formatDiagnostic(d, format))
 	}
 	if len(diagnostics) > 0 {
 		return 1

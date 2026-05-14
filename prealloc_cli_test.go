@@ -10,7 +10,7 @@ import (
 	"github.com/alexkohler/prealloc/pkg"
 )
 
-func TestRunSyntaxOnlyFormats(t *testing.T) {
+func TestRunSyntaxOnlyFormats(t *testing.T) { //nolint:paralleltest
 	dir := writeTempModule(t, map[string]string{
 		"p.go": `package p
 
@@ -49,7 +49,7 @@ func f(items []int) {
 	}
 }
 
-func TestRunFallbackTypecheck(t *testing.T) {
+func TestRunFallbackTypecheck(t *testing.T) { //nolint:paralleltest
 	dir := writeTempModule(t, map[string]string{
 		"p.go": `package p
 
@@ -87,6 +87,8 @@ func f() {
 }
 
 func TestFallbackTypecheckMatchesTypedCoreOnTestdata(t *testing.T) {
+	t.Parallel()
+
 	opts := pkg.Options{
 		Simple:            true,
 		IncludeRangeLoops: true,
