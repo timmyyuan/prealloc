@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +151,59 @@ func f(items []int) {
 	}
 	if !strings.Contains(lines[0], "p.go:4:6: Consider preallocating xs with capacity len(items) (prealloc)") {
 		t.Fatalf("unexpected formatted diagnostic: %q", lines[0])
+	}
+}
+
+func TestPackageAPIGolangCILintJSON(t *testing.T) { //nolint:paralleltest
+	dir := writeTempModule(t, map[string]string{
+		"p.go": `package p
+
+func f(items []int) {
+	var xs []int
+	for i := range items {
+		xs = append(xs, i)
+	}
+}
+`,
+	})
+	t.Chdir(dir)
+
+	output, err := pkg.CheckPackageGolangCILintJSON([]string{"."}, pkg.DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Issues) != 1 {
+		t.Fatalf("got %d issues, want 1: %#v", len(output.Issues), output)
+	}
+	issue := output.Issues[0]
+	if issue.FromLinter != "prealloc" {
+		t.Fatalf("FromLinter = %q, want prealloc", issue.FromLinter)
+	}
+	if issue.Text != "Consider preallocating xs with capacity len(items)" {
+		t.Fatalf("Text = %q", issue.Text)
+	}
+	if !strings.HasSuffix(issue.Pos.Filename, "p.go") || issue.Pos.Line != 4 || issue.Pos.Column != 6 {
+		t.Fatalf("unexpected position: %#v", issue.Pos)
+	}
+
+	data, err := json.Marshal(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"Issues"`) || !strings.Contains(string(data), `"FromLinter":"prealloc"`) {
+		t.Fatalf("marshaled JSON does not look like golangci-lint JSON: %s", data)
+	}
+
+	var decoded pkg.GolangCILintJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := decoded.Diagnostics()
+	if len(diagnostics) != 1 {
+		t.Fatalf("decoded diagnostics = %d, want 1", len(diagnostics))
+	}
+	if diagnostics[0].Message != issue.Text {
+		t.Fatalf("decoded message = %q, want %q", diagnostics[0].Message, issue.Text)
 	}
 }
 

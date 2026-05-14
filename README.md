@@ -111,6 +111,22 @@ If you want structured diagnostics instead of formatted strings:
 diagnostics, err := prealloc.CheckPackages([]string{"./..."}, opts)
 ```
 
+If you want a Go struct that marshals to the same top-level JSON shape as `golangci-lint --output.json.path`:
+
+```go
+report, err := prealloc.CheckPackageGolangCILintJSON([]string{"./..."}, opts)
+```
+
+The returned `prealloc.GolangCILintJSON` struct can be round-tripped with `encoding/json`:
+
+```go
+data, err := json.Marshal(report)
+
+var decoded prealloc.GolangCILintJSON
+err = json.Unmarshal(data, &decoded)
+diagnostics := decoded.Diagnostics()
+```
+
 For integrations that already loaded and typechecked packages, use the lower-level API:
 
 ```go

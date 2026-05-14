@@ -42,6 +42,37 @@ type Diagnostic struct {
 	Message string
 }
 
+type GolangCILintJSON struct {
+	Issues []GolangCILintIssue    `json:"Issues"`
+	Report GolangCILintJSONReport `json:"Report"`
+}
+
+type GolangCILintJSONReport struct {
+	Linters []GolangCILintLinter `json:"Linters"`
+}
+
+type GolangCILintLinter struct {
+	Name    string `json:"Name"`
+	Enabled bool   `json:"Enabled,omitempty"`
+}
+
+type GolangCILintIssue struct {
+	FromLinter           string               `json:"FromLinter"`
+	Text                 string               `json:"Text"`
+	Severity             string               `json:"Severity"`
+	SourceLines          []string             `json:"SourceLines"`
+	Pos                  GolangCILintPosition `json:"Pos"`
+	ExpectNoLint         bool                 `json:"ExpectNoLint"`
+	ExpectedNoLintLinter string               `json:"ExpectedNoLintLinter"`
+}
+
+type GolangCILintPosition struct {
+	Filename string `json:"Filename"`
+	Offset   int    `json:"Offset"`
+	Line     int    `json:"Line"`
+	Column   int    `json:"Column"`
+}
+
 type SyntaxResult struct {
 	Diagnostics []Diagnostic
 	HasUnknown  bool
@@ -154,6 +185,58 @@ func CheckPackageLines(patterns []string, opts Options) ([]string, error) {
 		return nil, err
 	}
 	return FormatDiagnostics(diagnostics, opts.Format), nil
+}
+
+func CheckPackageGolangCILintJSON(patterns []string, opts Options) (GolangCILintJSON, error) {
+	diagnostics, err := CheckPackages(patterns, opts)
+	if err != nil {
+		return GolangCILintJSON{}, err
+	}
+	return DiagnosticsToGolangCILintJSON(diagnostics), nil
+}
+
+func DiagnosticsToGolangCILintJSON(diagnostics []Diagnostic) GolangCILintJSON {
+	SortDiagnostics(diagnostics)
+	issues := make([]GolangCILintIssue, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		issues = append(issues, d.GolangCILintIssue())
+	}
+	return GolangCILintJSON{
+		Issues: issues,
+		Report: GolangCILintJSONReport{
+			Linters: []GolangCILintLinter{
+				{Name: "prealloc", Enabled: true},
+			},
+		},
+	}
+}
+
+func (d Diagnostic) GolangCILintIssue() GolangCILintIssue {
+	return GolangCILintIssue{
+		FromLinter:   "prealloc",
+		Text:         d.Message,
+		Severity:     "",
+		SourceLines:  []string{},
+		Pos:          GolangCILintPosition{Filename: d.Path, Line: d.Line, Column: d.Column},
+		ExpectNoLint: false,
+	}
+}
+
+func (output GolangCILintJSON) Diagnostics() []Diagnostic {
+	diagnostics := make([]Diagnostic, 0, len(output.Issues))
+	for _, issue := range output.Issues {
+		diagnostics = append(diagnostics, issue.Diagnostic())
+	}
+	return diagnostics
+}
+
+func (issue GolangCILintIssue) Diagnostic() Diagnostic {
+	return Diagnostic{
+		Path:    issue.Pos.Filename,
+		Line:    issue.Pos.Line,
+		Column:  issue.Pos.Column,
+		Message: issue.Text,
+	}
 }
 
 func FormatDiagnostic(d Diagnostic, format OutputFormat) string {
