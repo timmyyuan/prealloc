@@ -28,11 +28,12 @@ const (
 )
 
 type Options struct {
-	Simple            bool
-	IncludeRangeLoops bool
-	IncludeForLoops   bool
-	Fallback          FallbackMode
-	Format            OutputFormat
+	Simple                bool
+	IncludeRangeLoops     bool
+	IncludeForLoops       bool
+	Fallback              FallbackMode
+	Format                OutputFormat
+	ExcludePathSubstrings []string
 }
 
 type Diagnostic struct {
@@ -115,7 +116,11 @@ func CheckPackages(patterns []string, opts Options) ([]Diagnostic, error) {
 	unknownSeen := map[string]bool{}
 	unknownPatterns := make([]string, 0, len(pkgs))
 	for _, p := range pkgs {
-		result := CheckSyntax(p.Fset, p.Syntax, opts)
+		files := filterASTFiles(p.Fset, p.Syntax, opts.ExcludePathSubstrings)
+		if len(files) == 0 {
+			continue
+		}
+		result := CheckSyntax(p.Fset, files, opts)
 		diagnostics = append(diagnostics, result.Diagnostics...)
 		if opts.Fallback == FallbackTypecheck && result.HasUnknown {
 			for _, pattern := range packagePatterns(p) {
@@ -130,13 +135,13 @@ func CheckPackages(patterns []string, opts Options) ([]Diagnostic, error) {
 	if opts.Fallback == FallbackTypecheck && len(unknownPatterns) > 0 {
 		typed, err := CheckPackagesWithTypes(unknownPatterns, opts)
 		if err != nil {
-			diagnostics = DeduplicateDiagnostics(diagnostics)
+			diagnostics = filterDiagnostics(DeduplicateDiagnostics(diagnostics), opts.ExcludePathSubstrings)
 			SortDiagnostics(diagnostics)
 			return diagnostics, nil
 		}
 		diagnostics = append(diagnostics, typed...)
 	}
-	diagnostics = DeduplicateDiagnostics(diagnostics)
+	diagnostics = filterDiagnostics(DeduplicateDiagnostics(diagnostics), opts.ExcludePathSubstrings)
 	SortDiagnostics(diagnostics)
 	return diagnostics, nil
 }
@@ -171,9 +176,13 @@ func CheckPackagesWithTypes(patterns []string, opts Options) ([]Diagnostic, erro
 		if p.TypesInfo == nil {
 			continue
 		}
-		diagnostics = append(diagnostics, CheckWithTypes(p.Fset, p.Syntax, p.TypesInfo, opts)...)
+		files := filterASTFiles(p.Fset, p.Syntax, opts.ExcludePathSubstrings)
+		if len(files) == 0 {
+			continue
+		}
+		diagnostics = append(diagnostics, CheckWithTypes(p.Fset, files, p.TypesInfo, opts)...)
 	}
-	diagnostics = DeduplicateDiagnostics(diagnostics)
+	diagnostics = filterDiagnostics(DeduplicateDiagnostics(diagnostics), opts.ExcludePathSubstrings)
 	SortDiagnostics(diagnostics)
 	return diagnostics, nil
 }
@@ -293,6 +302,9 @@ func CheckWithTypes(fset *token.FileSet, files []*ast.File, info *types.Info, op
 		TypesInfo: info,
 		Report: func(d analysis.Diagnostic) {
 			pos := fset.Position(d.Pos)
+			if pathExcluded(pos.Filename, opts.ExcludePathSubstrings) {
+				return
+			}
 			diagnostics = append(diagnostics, Diagnostic{
 				Path:    pos.Filename,
 				Line:    pos.Line,
@@ -303,6 +315,44 @@ func CheckWithTypes(fset *token.FileSet, files []*ast.File, info *types.Info, op
 	}
 	Check(pass, opts.Simple, opts.IncludeRangeLoops, opts.IncludeForLoops)
 	return diagnostics
+}
+
+func filterASTFiles(fset *token.FileSet, files []*ast.File, substrings []string) []*ast.File {
+	if len(substrings) == 0 {
+		return files
+	}
+	filtered := make([]*ast.File, 0, len(files))
+	for _, file := range files {
+		filename := fset.PositionFor(file.Pos(), false).Filename
+		if pathExcluded(filename, substrings) {
+			continue
+		}
+		filtered = append(filtered, file)
+	}
+	return filtered
+}
+
+func filterDiagnostics(diagnostics []Diagnostic, substrings []string) []Diagnostic {
+	if len(substrings) == 0 {
+		return diagnostics
+	}
+	filtered := make([]Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if pathExcluded(diagnostic.Path, substrings) {
+			continue
+		}
+		filtered = append(filtered, diagnostic)
+	}
+	return filtered
+}
+
+func pathExcluded(path string, substrings []string) bool {
+	for _, substring := range substrings {
+		if substring != "" && strings.Contains(path, substring) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeOptions(opts Options) Options {

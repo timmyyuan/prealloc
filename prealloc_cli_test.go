@@ -207,6 +207,31 @@ func f(items []int) {
 	}
 }
 
+func TestPackageAPIExcludePathSubstrings(t *testing.T) { //nolint:paralleltest
+	dir := writeTempModule(t, map[string]string{
+		"p.go": `package p
+
+func f(items []int) {
+	var xs []int
+	for i := range items {
+		xs = append(xs, i)
+	}
+}
+`,
+	})
+	t.Chdir(dir)
+
+	opts := pkg.DefaultOptions()
+	opts.ExcludePathSubstrings = []string{"p.go"}
+	diagnostics, err := pkg.CheckPackages([]string{"."}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected path filter to exclude diagnostics, got %#v", diagnostics)
+	}
+}
+
 func writeTempModule(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()

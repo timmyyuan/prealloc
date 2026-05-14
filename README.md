@@ -94,6 +94,7 @@ func main() {
 	opts.IncludeForLoops = true
 	opts.Fallback = prealloc.FallbackTypecheck
 	opts.Format = prealloc.FormatGolangCILint
+	opts.ExcludePathSubstrings = []string{"vendor/generated"}
 
 	lines, err := prealloc.CheckPackageLines([]string{"./..."}, opts)
 	if err != nil {
@@ -126,6 +127,8 @@ var decoded prealloc.GolangCILintJSON
 err = json.Unmarshal(data, &decoded)
 diagnostics := decoded.Diagnostics()
 ```
+
+Set `ExcludePathSubstrings` to skip diagnostics for any file path that contains one of the configured substrings.
 
 For integrations that already loaded and typechecked packages, use the lower-level API:
 
