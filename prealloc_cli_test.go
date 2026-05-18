@@ -232,6 +232,33 @@ func f(items []int) {
 	}
 }
 
+func TestPackageAPIDir(t *testing.T) {
+	dir := writeTempModule(t, map[string]string{
+		"p.go": `package p
+
+func f(items []int) {
+	var xs []int
+	for i := range items {
+		xs = append(xs, i)
+	}
+}
+`,
+	})
+
+	opts := pkg.DefaultOptions()
+	opts.Dir = dir
+	diagnostics, err := pkg.CheckPackages([]string{"."}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 1 {
+		t.Fatalf("got %d diagnostics, want 1: %#v", len(diagnostics), diagnostics)
+	}
+	if !strings.HasSuffix(diagnostics[0].Path, "p.go") {
+		t.Fatalf("expected diagnostic from temp module, got %#v", diagnostics[0])
+	}
+}
+
 func writeTempModule(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()

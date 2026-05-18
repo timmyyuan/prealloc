@@ -91,6 +91,7 @@ import (
 
 func main() {
 	opts := prealloc.DefaultOptions()
+	opts.Dir = "/path/to/module"
 	opts.IncludeForLoops = true
 	opts.Fallback = prealloc.FallbackTypecheck
 	opts.Format = prealloc.FormatGolangCILint
@@ -128,7 +129,7 @@ err = json.Unmarshal(data, &decoded)
 diagnostics := decoded.Diagnostics()
 ```
 
-Set `ExcludePathSubstrings` to skip diagnostics for any file path that contains one of the configured substrings.
+Set `Dir` to analyze patterns relative to a specific module directory without changing the process working directory. Set `ExcludePathSubstrings` to skip diagnostics for any file path that contains one of the configured substrings.
 
 For integrations that already loaded and typechecked packages, use the lower-level API:
 

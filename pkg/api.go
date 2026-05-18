@@ -28,6 +28,7 @@ const (
 )
 
 type Options struct {
+	Dir                   string
 	Simple                bool
 	IncludeRangeLoops     bool
 	IncludeForLoops       bool
@@ -99,6 +100,7 @@ func CheckPackages(patterns []string, opts Options) ([]Diagnostic, error) {
 	}
 
 	cfg := &packages.Config{
+		Dir: opts.Dir,
 		Mode: packages.NeedName |
 			packages.NeedFiles |
 			packages.NeedCompiledGoFiles |
@@ -156,6 +158,7 @@ func CheckPackagesWithTypes(patterns []string, opts Options) ([]Diagnostic, erro
 	}
 
 	cfg := &packages.Config{
+		Dir: opts.Dir,
 		Mode: packages.NeedName |
 			packages.NeedFiles |
 			packages.NeedCompiledGoFiles |
